@@ -45,54 +45,70 @@ class Ext2Traverser:
         # the number of inodes per group
         self.inodes_per_group = self.superblock[40:44]
 
-    # 
+    # copy the contents of a file
     def copy_data_to_file(self):
+        # get the amount of blocks that the data in the file spans
         blocks_count = (int.from_bytes(first_data_inode[28:32], byteorder='little'))//2
+        # initialize a result string that will hold the decoded contents
         result = ""
-        for i in range(12):
+        for i in range(min(12, blocks_count)):
+            # get the block number of the next data location
             block_number = int.from_bytes(first_data_inode[40+(4*i):44+(4*i)], byteorder='little')
-            print(block_number)
-            print(file_system[1024*(block_number):1024*(block_number+1)])
+            # add decoded data to the result string
             result += file_system[1024*(block_number):1024*(block_number+1)].decode('utf-8')
 
-        # go to the indirect blocks
-        block_number = int.from_bytes(first_data_inode[40+(4*12):44+(4*12)], byteorder='little')
-        new_block = file_system[1024*block_number:1024*(block_number+1)]
+        # if the number of blocks is greater than 12, go to the indirect blocks
+        if blocks_count > 12:
+            # get the block number holding the indirect data
+            block_number = int.from_bytes(first_data_inode[40+(4*12):44+(4*12)], byteorder='little')
+            # load the block into a variable
+            indirect_block = file_system[1024*block_number:1024*(block_number+1)]
 
-        for i in range(blocks_count-12):
-            block_number = int.from_bytes(new_block[4*i:4*(i+1)], byteorder='little')
-            print(block_number)
-            print(file_system[1024*(block_number):1024*(block_number)+1024])
-            result += file_system[1024*(block_number):1024*(block_number)+1024].decode('utf-8')
+            for i in range(blocks_count-12):
+                block_number = int.from_bytes(new_block[4*i:4*(i+1)], byteorder='little')
+                result += file_system[1024*(block_number):1024*(block_number)+1024].decode('utf-8')
 
+        # create a new file to hold the result
         result_file = open("output.txt", "w")
+        # write the result to the file
         result_file.write(result)
-        print(result)
 
+    # lists the subdirectories and files in the present location
+    # simulates the 'ls' command
     def list_subdirectories(self):
+        # keeps track of the position in the block
         position = 0
+        # signals if the length to the next entry is 0
         rec_len_zero = False
         while not rec_len_zero:
             # get the amount of bytes until the next record
-            record_length = int.from_bytes(data[position+4:position+6], byteorder='little')
+            record_length = self.to_int(data[position+4:position+6])
             # if it's 0, we have reached the end of the directory and can stop
             if record_length == 0:
                 rec_len_zero = True
+            # other wise, read and list the names of the files or subdirectories
             else:
-                name_length = int.from_bytes(data[position+6:position+7], byteorder='little')
-                print("Record length:",record_length)
-                print("Name length:", name_length)
-                name = str(data[a+8:a+8+name_length].decode('utf-8')) + '\n'
+                # length of the name of the file or directory
+                name_length = self.to_int(data[position+6:position+7])
+                # get the file_type of this entry
+                # 1 - regular file, 2 - directory
+                file_type = self.to_int(data[position+7:position+8])
+                # get the name
+                name = str(data[position+8:position+8+name_length].decode('utf-8'))
+                # print the name to the console
                 print(name)
-                a += record_length
+                # go to the beginning of the next entry
+                position += record_length
 
     # method to handle converting bit arrays to integers
     def to_int(self, bitarray):
         return int.from_bytes(bitarray, byteorder='little')
 
+    # method to calculate which block group the inode is in
     def inode_block_group_location(self, inode_index):
         return (inode_index - 1)/self.inodes_per_group
 
+    # method to calculate the local index of the inode in its block
     def local_inode_index(self, inode_index):
         return (inode_index - 1) % self.inodes_per_group
 
@@ -124,8 +140,8 @@ while not rec_len_zero:
         rec_len_zero = True
     else:
         name_length = int.from_bytes(data[a+6:a+7], byteorder='little')
-        print("Record length:",record_length)
-        print("Name length:", name_length)
+        directory_type = int.from_bytes(data[a+7:a+8], byteorder='little')
+        print("Directory Type:", directory_type)
         name = str(data[a+8:a+8+name_length].decode('utf-8')) + '\n'
         print(name)
         a += record_length
@@ -148,3 +164,6 @@ new_block = file_system[1024*block_number:1024*(block_number+1)]
 # have user be able to ls and see the subdirectories
 # have user be able to cd into any directory
 # able to copy file contents to some output
+
+# the main method will handle all of the user actions
+# if __name__ == '__main__':
