@@ -15,17 +15,28 @@ class Ext2Traverser:
     def __init__(self, file_path):
         # load the entire file system in from the file
         self.file_system = open(file_path, mode='rb').read()
-        # initialize the rest of the necessary information
-        # this will be modified with the first load_fs pass
+        """initialize the rest of the necessary information
+            this will be modified with the first load_fs pass"""
+        # the current block group we are in
         self.current_block_group = 0
+        # size of each block in the system - 1024 in this implementation
         self.block_size = 0
+        # number of blocks in each block group - 8192 in this implementation
         self.blocks_per_group = 0
+        # stores the superblock for the filesystem
         self.superblock = []
+        # stores the block group descriptor table for the filesystem
         self.block_group_desc_table = []
+        # the current inode table 
         self.inode_table = 0
+        # static value for the number of inodes per group - 1920 in this implementation
         self.inodes_per_group = 0
+        # holds the system root inode
         self.root_inode = []
+        # signifies the current directory or file we are looking at
         self.current_inode = []
+        # holds an array of subdirectory names and their corresponding inodes
+        self.subdirectory_array = []
         
     # loads the file into a class object and initializes all of the needed variables
     # starts in block group 0
@@ -43,8 +54,10 @@ class Ext2Traverser:
         self.inode_table = self.to_int(self.block_group_desc_table[8:12])
         # get the root directory inode
         self.root_inode = self.file_system[1024*inode_table+(128*1):1024*(inode_table)+(128*2)]
-        # the number of inodes per group
+        # the number of inodes per group - should be 1920 for this implementation
         self.inodes_per_group = self.superblock[40:44]
+        # set the current inode to the root inode
+        self.current_inode = self.file_system[self.block_size*self.inode_table+128:self.block_size*self.inode_table+256]
 
     # copies the contents of a file in the ext2 system and save it to a file on your local machine
     def copy_data_to_file(self):
@@ -76,7 +89,10 @@ class Ext2Traverser:
 
     # lists the subdirectories and files in the present location
     def list_subdirectories(self):
-        # self.current_block
+        # find out which block group we are in
+        block_group_number = self.current_inode//self.inodes_per_group
+        # find the block location of the inode table we need to use
+        inode_table_block = self.to_int(self.block_group_desc_table[8+32*block_group_number:12+32*block_group_number])
         # keeps track of the position in the block
         position = 0
         # signals if the length to the next entry is 0
@@ -104,12 +120,13 @@ class Ext2Traverser:
     # go to a new directory location
     def change_directory(self):
         # get block number of the directory
+
         # set a class value to that new block value
         # set up an array to carry each item and its inode
         # check user input against the name string
         # if it matches and its number is 2, go to it
-        # if not, display an error message
-        return 0
+        # display different error messages for 
+        return 0 # placeholder
 
     # method to handle converting bit arrays to integers
     def to_int(self, bitarray):
@@ -134,7 +151,13 @@ first_inode = superblock[40:44]
 block_group_desc_table = file_system[2048:3072]
 inode_table = block_group_desc_table[8:12]
 inode_table = int.from_bytes(inode_table, byteorder='little')
+inode_table_2 = block_group_desc_table[40:44]
+inode_table_2 = int.from_bytes(inode_table_2, byteorder='little')
+inode_table_3 = block_group_desc_table[72:76]
+inode_table_3 = int.from_bytes(inode_table_3, byteorder='little')
 print("Inode table:", inode_table)
+print("Inode table 2:", inode_table_2)
+print("Inode table 3:", inode_table_3)
 
 # find the root inode
 root_inode = file_system[1024*inode_table+(128*1):1024*(inode_table)+(128*2)]
@@ -163,13 +186,12 @@ while not rec_len_zero:
 
 print(sub_directory_array)
 # 3841 inode is for a directory
-inode_11 = file_system[1024*(8192+inode_table)+(128*0):1024*(8192+inode_table)+(128*1)]
+inode_11 = file_system[1024*(inode_table_3)+(128*0):1024*inode_table_3+(128*1)]
+print(root_inode)
+print(inode_11)
 # get the block count
 blocks_count = (int.from_bytes(inode_11[28:32], byteorder='little'))//2
 print("Blocks count:",blocks_count)
-inodes_per_group = int.from_bytes(superblock[40:44], byteorder='little')
-# 1920
-print("Inodes per group:", inodes_per_group)
 # find the block number the data is stored in
 block_number = int.from_bytes(inode_11[40:44], byteorder='little')
 data = file_system[1024*(block_number):1024*(block_number+1)]
@@ -189,6 +211,7 @@ while not rec_len_zero:
         sub_directory_array.append([inode_location, name])
         a += record_length
 
+print(sub_directory_array)
 # start in root directory
 # have user be able to ls and see the subdirectories
 # have user be able to cd into any directory
