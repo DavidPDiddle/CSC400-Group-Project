@@ -15,6 +15,8 @@ class Ext2Traverser:
     def __init__(self, file_path):
         # load the entire file system in from the file
         self.file_system = open(file_path, mode='rb').read()
+        # the size of an ext2 inode is 128
+        self.inode_size = 128
         """initialize the rest of the necessary information
             this will be modified with the first load_fs pass"""
         # the current block group we are in
@@ -93,8 +95,21 @@ class Ext2Traverser:
         block_group_number = self.current_inode//self.inodes_per_group
         # find the block location of the inode table we need to use
         inode_table_block = self.to_int(self.block_group_desc_table[8+32*block_group_number:12+32*block_group_number])
+        if block_group_number == 0:
+            # if we are in the root inode table, then the directory will be in the second inode
+            # 128 is the size of an ext2 inode
+            inode = self.file_system[self.block_size*inode_table_block+self.inode_size:self.block_size*inode_table_block+self.inode_size*2]
+        else:
+            # if we are not in the root inode, then the directory is in the first entry
+            inode = self.file_system[self.block_size*inode_table_block:self.block_size*inode_table_block+self.inode_size]
+        # find the block number the data is stored in
+        block_number = self.to_int(inode[40:44])
+        # go to that data block
+        data_block = self.file_system[self.block_size*block_number:self.block_size*(block_number+1)]
         # keeps track of the position in the block
         position = 0
+        # array that holds an item name and whether it is a file or directory
+        self.sub_directory_array = []
         # signals if the length to the next entry is 0
         rec_len_zero = False
         while not rec_len_zero:
@@ -110,12 +125,16 @@ class Ext2Traverser:
                 # get the file type of this entry
                 # 1 - regular file, 2 - directory
                 file_type = self.to_int(data[position+7:position+8])
+                # get the location of the data inode for this entry
+                inode_location = self.to_int(data[position:position+4])
                 # get the name of the entry
                 name = str(data[position+8:position+8+name_length].decode('utf-8'))
                 # print the name to the console
                 print(name)
                 # go to the beginning of the next entry
                 position += record_length
+                # append the inode location and file name to the sub directory array
+                self.sub_directory_array.append([inode_location, name])
 
     # go to a new directory location
     def change_directory(self):
