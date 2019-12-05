@@ -1,5 +1,5 @@
 """
-Group: David Doyle, Skye LeForge, Logan Barker
+Group: David Doyle, Skye LeForge, Ronald Logan Barker, Chance Whittaker
 Class: CSC400
 Date: 12/3/2019
 Purpose: Read an Ext2 file system using only read-sector calls. It should be able to:
@@ -129,17 +129,25 @@ class Ext2Traverser:
                 inode_location = self.to_int(data[position:position+4])
                 # get the name of the entry
                 name = str(data[position+8:position+8+name_length].decode('utf-8'))
-                # print the name to the console
+                # print the name and file size to the console
                 print(name)
                 # go to the beginning of the next entry
                 position += record_length
                 # append the inode location and file name to the sub directory array
-                self.sub_directory_array.append([inode_location, name])
+                self.sub_directory_array.append([inode_location, name, file_type])
 
     # go to a new directory location
-    def change_directory(self):
-        # get block number of the directory
-
+    def change_directory(self, directory_name):
+        block_number = None
+        # get block number of the directory, but only if it's a directory
+        for i in range(len(self.sub_directory_array)):
+            if directory_name == self.sub_directory_array[i][1] and self.sub_directory_array[2] == 2:
+                block_number = self.sub_directory_array[i][0]
+        # report issues to the user and exit the method if they do not provide valid input
+        if block_number == None:
+            print("%s not recognized as a valid directory name" % directory_name)
+            return
+        
         # set a class value to that new block value
         # set up an array to carry each item and its inode
         # check user input against the name string
@@ -198,6 +206,8 @@ while not rec_len_zero:
         name_length = int.from_bytes(data[a+6:a+7], byteorder='little')
         directory_type = int.from_bytes(data[a+7:a+8], byteorder='little')
         inode_location = int.from_bytes(data[a:a+4], byteorder='little')
+        if directory_type == 1:
+            file_size = 
         name = str(data[a+8:a+8+name_length].decode('utf-8'))
         print(directory_type, name)
         sub_directory_array.append([inode_location, name])
