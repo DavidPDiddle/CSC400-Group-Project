@@ -60,6 +60,7 @@ class Ext2Traverser:
         self.num_block_groups = (self.to_int(self.superblock[4:8])//self.to_int(self.superblock[32:36])) + 1
         # get the inode table location for each inode group per block group
         for i in range(self.num_block_groups):
+            padding = self.to_int(self.block_group_desc_table[18:20])
             self.inode_array.append(self.to_int(self.block_group_desc_table[8+32*i:12+32*i]))
         # get the root directory inode
         self.root_inode = self.file_system[1024*self.inode_array[0]+(128*1):1024*(self.inode_array[0])+(128*2)]
@@ -72,41 +73,89 @@ class Ext2Traverser:
 
     # copies the contents of a file in the ext2 system and save it to a file on your local machine
     def copy_data_to_file(self, file_name):
+        # first find the file in the subdirectory array
+        inode_location = None
+        for i in range(len(self.subdirectory_array)):
+            # so, if the name matches and it is a file, get the block location
+            if file_name == self.subdirectory_array[i][1] and self.subdirectory_array[i][2] == 1:
+                inode_location = self.subdirectory_array[i][0]
+        if inode_location == None:
+            print("%s is not recognized as a valid file name" % file_name)
+            return
+        # find out which block group the file is in
+        block_group_number = inode_location//self.inodes_per_group
+        # find the block location of the inode table we need to use
+        inode_table_block = self.inode_array[block_group_number]
+        # get the relative location of the inode in its block
+        relative_inode_value = (inode_location % self.inodes_per_group)-1
         # get the amount of blocks that the data in the file spans
-        blocks_count = (self.to_int(first_data_inode[28:32]))//2
-        # initialize a result string that will hold the decoded contents
-        result = ""
-        for i in range(min(12, blocks_count)):
-            # get the block number of the next data location
-            block_number = self.to_int(first_data_inode[40+(4*i):44+(4*i)])
-            # add decoded data to the result string
-            result += file_system[1024*(block_number):1024*(block_number+1)].decode('utf-8')
+        file_inode = self.file_system[self.block_size*self.inode_array[block_group_number]+128*(relative_inode_value):
+                                                     self.block_size*self.inode_array[block_group_number]+128*(relative_inode_value+1)]
+        blocks_count = (self.to_int(file_inode[28:32]))//2
+        # does something different based on what type of file it is
+        # this statement handles jpg images
+        if file_name[-4:].lower() == ".jpg":
+            # initialize the result bytearray
+            result = []
+            for i in range(min(12, blocks_count)):
+                # get the block number of the next data location
+                block_number = self.to_int(file_inode[40+(4*i):44+(4*i)])
+                # append the data bytearray to the result
+                result.append(self.file_system[1024*(block_number):1024*(block_number+1)])
 
-        # if the number of blocks is greater than 12, go to the indirect blocks
-        if blocks_count > 12:
-            # get the block number holding the indirect data
-            block_number = self.to_int(first_data_inode[40+(4*12):44+(4*12)])
-            # load the block into a variable
-            indirect_blocks = file_system[1024*block_number:1024*(block_number+1)]
+            # if the number of blocks is greater than 12, go to the indirect blocks
+            if blocks_count > 12:
+                # get the block number holding the indirect data
+                block_number = self.to_int(file_inode[40+(4*12):44+(4*12)])
+                # load the block into a variable
+                indirect_blocks = self.file_system[1024*block_number:1024*(block_number+1)]
+                # get the rest of the data
+                for i in range(blocks_count-13):
+                    block_number = self.to_int(indirect_blocks[4*i:4*(i+1)])
+                    result.append(self.file_system[1024*(block_number):1024*(block_number)+1024])
+            # flatten the result array
+            flattened_result = [item for sublist in result for item in sublist]
+            image = Image.frombytes(flattened_result)
+            image.save(file_name)
 
-            for i in range(blocks_count-13):
-                block_number = self.to_int(indirect_blocks[4*i:4*(i+1)])
-                result += file_system[1024*(block_number):1024*(block_number)+1024].decode('utf-8')
+        elif file_name[-4:] == ".gif":
+            return # to-do
+        elif file_name[-4:] == ".mp3":
+            return # to-do
+        else:
+            # if the file is a text file, initialize a result string that will hold the decoded contents
+            result = ""
+            for i in range(min(12, blocks_count)):
+                # get the block number of the next data location
+                block_number = self.to_int(file_inode[40+(4*i):44+(4*i)])
+                # add decoded data to the result string
+                result += self.file_system[1024*(block_number):1024*(block_number+1)].decode('utf-8')
 
-        # create a new file to hold the result
-        result_file = open("output.txt", "w")
-        # write the result to the file
-        result_file.write(result)
+            # if the number of blocks is greater than 12, go to the indirect blocks
+            if blocks_count > 12:
+                # get the block number holding the indirect data
+                block_number = self.to_int(file_inode[40+(4*12):44+(4*12)])
+                # load the block into a variable
+                indirect_blocks = self.file_system[1024*block_number:1024*(block_number+1)]
+                # get the rest of the data
+                for i in range(blocks_count-13):
+                    block_number = self.to_int(indirect_blocks[4*i:4*(i+1)])
+                    result += self.file_system[1024*(block_number):1024*(block_number)+1024].decode('utf-8')
+
+            # create a new text file to hold the result with the same name as the file
+            result_file = open(file_name, "w")
+            # write the result to the file
+            result_file.write(result)
+            print("Data saved to %s" % file_name)
 
     # loads the subdirectory array for the current directory
     def load_subdirectory_array(self):
-        # find out which block group we are into_int
+        # find out which block group we are in
         block_group_number = self.current_inode//self.inodes_per_group
         # find the block location of the inode table we need to use
         inode_table_block = self.inode_array[block_group_number]
         if block_group_number == 0:
             # if we are in the root inode table, then the directory will be in the second inode
-            # 128 is the size of an ext2 inode
             inode = self.file_system[self.block_size*inode_table_block+self.inode_size:self.block_size*inode_table_block+self.inode_size*2]
         else:
             # if we are not in the root inode, then the directory is in the first entry
@@ -145,17 +194,17 @@ class Ext2Traverser:
 
     # go to a new directory location
     def change_directory(self, directory_name):
-        block_number = None
+        inode_number = None
         # get block number of the directory, but only if it's a directory
         for i in range(len(self.subdirectory_array)):
             if directory_name == self.subdirectory_array[i][1] and self.subdirectory_array[i][2] == 2:
-                block_number = self.subdirectory_array[i][0]
+                inode_number = self.subdirectory_array[i][0]
         # report issues to the user and exit the method if they do not provide valid input
-        if block_number == None:
+        if inode_number == None:
             print("%s not recognized as a valid directory name" % directory_name)
             return
         # set the current block number to the new directory
-        self.current_inode = block_number
+        self.current_inode = inode_number
         # update the subdirectory array
         self.load_subdirectory_array()
 
