@@ -10,6 +10,9 @@ Purpose: Read an Ext2 file system using only read-sector calls. It should be abl
     - Copy the contents of a file and save it
 """
 
+import io
+from PIL import Image
+
 # the class keeps track of the block we are currently in
 class Ext2Traverser:
     def __init__(self, file_path):
@@ -29,21 +32,22 @@ class Ext2Traverser:
         self.superblock = []
         # stores the block group descriptor table for the filesystem
         self.block_group_desc_table = []
-        # the current inode table 
-        self.inode_table = 0
         # static value for the number of inodes per group - 1920 in this implementation
         self.inodes_per_group = 0
         # holds the system root inode
         self.root_inode = []
-        # signifies the current directory or file we are looking at
-        self.current_inode = []
+        # an array that stores all of the beginning inode table locations by block
+        self.inode_array = []
         # holds an array of subdirectory names and their corresponding inodes
         self.subdirectory_array = []
+        # holds the current directory inode we are looking at
+        self.current_inode = 0
+        # number of block groups in the system
+        self.num_block_groups = 0
         
     # loads the file into a class object and initializes all of the needed variables
     # starts in block group 0
     def load_fs(self):
-        # load in the entire filesystem
         # define the superblock for the block group
         self.superblock = self.file_system[1024:2048]
         # get the block group description table
@@ -52,17 +56,22 @@ class Ext2Traverser:
         self.block_size = 1024 << self.to_int(self.superblock[24:28])
         # get the number of blocks per group
         self.blocks_per_group = self.to_int(self.superblock[32:36])
-        # get the inode table location for block 0
-        self.inode_table = self.to_int(self.block_group_desc_table[8:12])
+        # get the number of block groups in the system
+        self.num_block_groups = (self.to_int(self.superblock[4:8])//self.to_int(self.superblock[32:36])) + 1
+        # get the inode table location for each inode group per block group
+        for i in range(self.num_block_groups):
+            self.inode_array.append(self.to_int(self.block_group_desc_table[8+32*i:12+32*i]))
         # get the root directory inode
-        self.root_inode = self.file_system[1024*inode_table+(128*1):1024*(inode_table)+(128*2)]
+        self.root_inode = self.file_system[1024*self.inode_array[0]+(128*1):1024*(self.inode_array[0])+(128*2)]
         # the number of inodes per group - should be 1920 for this implementation
-        self.inodes_per_group = self.superblock[40:44]
+        self.inodes_per_group = self.to_int(self.superblock[40:44])
         # set the current inode to the root inode
-        self.current_inode = self.file_system[self.block_size*self.inode_table+128:self.block_size*self.inode_table+256]
+        self.current_inode = self.inode_array[0]
+        # initialize the subdirectory array
+        self.load_subdirectory_array()
 
     # copies the contents of a file in the ext2 system and save it to a file on your local machine
-    def copy_data_to_file(self):
+    def copy_data_to_file(self, file_name):
         # get the amount of blocks that the data in the file spans
         blocks_count = (self.to_int(first_data_inode[28:32]))//2
         # initialize a result string that will hold the decoded contents
@@ -89,12 +98,12 @@ class Ext2Traverser:
         # write the result to the file
         result_file.write(result)
 
-    # lists the subdirectories and files in the present location
-    def list_subdirectories(self):
-        # find out which block group we are in
+    # loads the subdirectory array for the current directory
+    def load_subdirectory_array(self):
+        # find out which block group we are into_int
         block_group_number = self.current_inode//self.inodes_per_group
         # find the block location of the inode table we need to use
-        inode_table_block = self.to_int(self.block_group_desc_table[8+32*block_group_number:12+32*block_group_number])
+        inode_table_block = self.inode_array[block_group_number]
         if block_group_number == 0:
             # if we are in the root inode table, then the directory will be in the second inode
             # 128 is the size of an ext2 inode
@@ -109,142 +118,92 @@ class Ext2Traverser:
         # keeps track of the position in the block
         position = 0
         # array that holds an item name and whether it is a file or directory
-        self.sub_directory_array = []
+        self.subdirectory_array = []
         # signals if the length to the next entry is 0
         rec_len_zero = False
         while not rec_len_zero:
             # get the amount of bytes until the next record
-            record_length = self.to_int(data[position+4:position+6])
+            record_length = self.to_int(data_block[position+4:position+6])
             # if it's 0, we have reached the end of the directory and can stop
             if record_length == 0:
                 rec_len_zero = True
             # other wise, read and list the names of the files or subdirectories
             else:
                 # length of the name of the file or directory
-                name_length = self.to_int(data[position+6:position+7])
+                name_length = self.to_int(data_block[position+6:position+7])
                 # get the file type of this entry
                 # 1 - regular file, 2 - directory
-                file_type = self.to_int(data[position+7:position+8])
+                file_type = self.to_int(data_block[position+7:position+8])
                 # get the location of the data inode for this entry
-                inode_location = self.to_int(data[position:position+4])
+                inode_location = self.to_int(data_block[position:position+4])
                 # get the name of the entry
-                name = str(data[position+8:position+8+name_length].decode('utf-8'))
-                # print the name and file size to the console
-                print(name)
+                name = str(data_block[position+8:position+8+name_length].decode('utf-8'))
                 # go to the beginning of the next entry
                 position += record_length
                 # append the inode location and file name to the sub directory array
-                self.sub_directory_array.append([inode_location, name, file_type])
+                self.subdirectory_array.append([inode_location, name, file_type])
 
     # go to a new directory location
     def change_directory(self, directory_name):
         block_number = None
         # get block number of the directory, but only if it's a directory
-        for i in range(len(self.sub_directory_array)):
-            if directory_name == self.sub_directory_array[i][1] and self.sub_directory_array[2] == 2:
-                block_number = self.sub_directory_array[i][0]
+        for i in range(len(self.subdirectory_array)):
+            if directory_name == self.subdirectory_array[i][1] and self.subdirectory_array[i][2] == 2:
+                block_number = self.subdirectory_array[i][0]
         # report issues to the user and exit the method if they do not provide valid input
         if block_number == None:
             print("%s not recognized as a valid directory name" % directory_name)
             return
-        
-        # set a class value to that new block value
-        # set up an array to carry each item and its inode
-        # check user input against the name string
-        # if it matches and its number is 2, go to it
-        # display different error messages for 
-        return 0 # placeholder
+        # set the current block number to the new directory
+        self.current_inode = block_number
+        # update the subdirectory array
+        self.load_subdirectory_array()
+
+    def list_subdirectories(self):
+        # print the names of the subdirectories and files and size in bytes of the files
+        for i in range(len(self.subdirectory_array)):
+            # if the entry is a file, print the name as well as the size in bytes
+            if self.subdirectory_array[i][2] == 1:
+                # this convoluted mess grabs the file size as a bytearray
+                file_size = self.file_system[self.block_size*self.inode_array[self.subdirectory_array[i][0]//self.inodes_per_group]+
+                                                self.inode_size*(self.subdirectory_array[i][0]%self.inodes_per_group):
+                                                    self.block_size*self.inode_array[self.subdirectory_array[i][0]//self.inodes_per_group]+
+                                                    self.inode_size*((self.subdirectory_array[i][0]%self.inodes_per_group)+1)][4:8]
+                # then convert it to an integer
+                file_size = self.to_int(file_size)
+                print("%s\t%d bytes" % (self.subdirectory_array[i][1], file_size))
+            else:
+                print(self.subdirectory_array[i][1])
 
     # method to handle converting bit arrays to integers
     def to_int(self, bitarray):
         return int.from_bytes(bitarray, byteorder='little')
 
-    # method to calculate which block group the inode is in
-    def inode_block_group_location(self, inode_index):
-        return (inode_index - 1)/self.inodes_per_group
-
-    # method to calculate the local index of the inode in its block
-    def local_inode_index(self, inode_index):
-        return (inode_index - 1) % self.inodes_per_group
 
 
-# testing methods down here before putting them in the class
+if __name__ == '__main__':
+    # initialize the filesystem
+    fs = Ext2Traverser("C:/Users/15022/Documents/CSC400/virtdisk")
+    fs.load_fs()
 
-file_system = open("C:/Users/15022/Documents/CSC400/virtdisk", mode='rb').read()
-
-superblock = file_system[1024:2048]
-first_inode = superblock[40:44]
-
-block_group_desc_table = file_system[2048:3072]
-inode_table = block_group_desc_table[8:12]
-inode_table = int.from_bytes(inode_table, byteorder='little')
-inode_table_2 = block_group_desc_table[40:44]
-inode_table_2 = int.from_bytes(inode_table_2, byteorder='little')
-inode_table_3 = block_group_desc_table[72:76]
-inode_table_3 = int.from_bytes(inode_table_3, byteorder='little')
-print("Inode table:", inode_table)
-print("Inode table 2:", inode_table_2)
-print("Inode table 3:", inode_table_3)
-
-# find the root inode
-root_inode = file_system[1024*inode_table+(128*1):1024*(inode_table)+(128*2)]
-
-# get the number of blocks in the root inode
-blocks_count = (int.from_bytes(root_inode[28:32], byteorder='little'))//2
-print("Blocks count:",blocks_count)
-
-block_number = int.from_bytes(root_inode[40:44], byteorder='little')
-data = file_system[1024*(block_number):1024*(block_number+1)]
-a = 0
-sub_directory_array = []
-rec_len_zero = False
-while not rec_len_zero:
-    record_length = int.from_bytes(data[a+4:a+6], byteorder='little')
-    if record_length == 0:
-        rec_len_zero = True
-    else:
-        name_length = int.from_bytes(data[a+6:a+7], byteorder='little')
-        directory_type = int.from_bytes(data[a+7:a+8], byteorder='little')
-        inode_location = int.from_bytes(data[a:a+4], byteorder='little')
-        if directory_type == 1:
-            file_size = 
-        name = str(data[a+8:a+8+name_length].decode('utf-8'))
-        print(directory_type, name)
-        sub_directory_array.append([inode_location, name])
-        a += record_length
-
-print(sub_directory_array)
-# 3841 inode is for a directory
-inode_11 = file_system[1024*(inode_table_3)+(128*0):1024*inode_table_3+(128*1)]
-print(root_inode)
-print(inode_11)
-# get the block count
-blocks_count = (int.from_bytes(inode_11[28:32], byteorder='little'))//2
-print("Blocks count:",blocks_count)
-# find the block number the data is stored in
-block_number = int.from_bytes(inode_11[40:44], byteorder='little')
-data = file_system[1024*(block_number):1024*(block_number+1)]
-a = 0
-sub_directory_array = []
-rec_len_zero = False
-while not rec_len_zero:
-    record_length = int.from_bytes(data[a+4:a+6], byteorder='little')
-    if record_length == 0:
-        rec_len_zero = True
-    else:
-        name_length = int.from_bytes(data[a+6:a+7], byteorder='little')
-        directory_type = int.from_bytes(data[a+7:a+8], byteorder='little')
-        inode_location = int.from_bytes(data[a:a+4], byteorder='little')
-        name = str(data[a+8:a+8+name_length].decode('utf-8'))
-        print(directory_type, name)
-        sub_directory_array.append([inode_location, name])
-        a += record_length
-
-print(sub_directory_array)
-# start in root directory
-# have user be able to ls and see the subdirectories
-# have user be able to cd into any directory
-# able to copy file contents to some output
-
-# the main method will handle all of the user actions
-# if __name__ == '__main__':
+    # simulate the command line
+    # allows for ls, cd, open, and quit commands
+    done = False
+    while not done:
+        user_input = input("Enter a command: ")
+        if user_input[0:3] == "cd " and len(user_input) > 3:
+            fs.change_directory(user_input[3:])
+        elif user_input == "ls":
+            print("Contents of current directory:")
+            fs.list_subdirectories()
+        elif user_input[0:5] == "open " and len(user_input) > 5:
+            fs.copy_data_to_file(user_input[5:])
+        elif user_input == "quit":
+            done = True
+        else:
+            print("Please enter a valid input")
+            print("ls - list subdirectories and files")
+            print("cd {directory} - change directory")
+            print("open {file} - open a file and save it locally")
+            print("quit - exit")
+        print("\n")
