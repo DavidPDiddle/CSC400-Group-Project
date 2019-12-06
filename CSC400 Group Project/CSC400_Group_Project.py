@@ -94,14 +94,15 @@ class Ext2Traverser:
         blocks_count = (self.to_int(file_inode[28:32]))//2
         # does something different based on what type of file it is
         # this statement handles jpg images
-        if file_name[-4:].lower() == ".jpg":
+        if file_name[-4:].lower() == ".jpg" or file_name[-4:].lower() == ".gif" or file_name[-4:].lower() == ".mp3":
             # initialize the result bytearray
-            result = []
+            result_file = open(file_name, "wb")
             for i in range(min(12, blocks_count)):
                 # get the block number of the next data location
                 block_number = self.to_int(file_inode[40+(4*i):44+(4*i)])
                 # append the data bytearray to the result
-                result.append(self.file_system[1024*(block_number):1024*(block_number+1)])
+                result = self.file_system[1024*(block_number):1024*(block_number+1)]
+                result_file.write(result)
 
             # if the number of blocks is greater than 12, go to the indirect blocks
             if blocks_count > 12:
@@ -112,16 +113,8 @@ class Ext2Traverser:
                 # get the rest of the data
                 for i in range(blocks_count-13):
                     block_number = self.to_int(indirect_blocks[4*i:4*(i+1)])
-                    result.append(self.file_system[1024*(block_number):1024*(block_number)+1024])
-            # flatten the result array
-            flattened_result = [item for sublist in result for item in sublist]
-            image = Image.frombytes(flattened_result)
-            image.save(file_name)
-
-        elif file_name[-4:] == ".gif":
-            return # to-do
-        elif file_name[-4:] == ".mp3":
-            return # to-do
+                    result = self.file_system[1024*(block_number):1024*(block_number)+1024]
+                    result_file.write(result)
         else:
             # if the file is a text file, initialize a result string that will hold the decoded contents
             result = ""
